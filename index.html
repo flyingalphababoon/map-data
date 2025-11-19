@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Dashboard Map</title>
+    <title>Secure Live Map</title>
     
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
      
     <style>
         body { margin: 0; padding: 0; font-family: sans-serif; }
@@ -21,24 +23,35 @@
             border-radius: 5px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.3);
             font-weight: bold;
+            min-width: 200px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
 
-    <div id="status" class="status-box">Loading Live Data...</div>
+    <div id="status" class="status-box">Waiting for login...</div>
     <div id="map"></div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
 
     <script>
-        // ==========================================
-        // CONFIGURATION: PASTE YOUR GOOGLE SHEET CSV LINK HERE
-        // ==========================================
+        // ==================================================
+        // CONFIGURATION SECTION
+        // ==================================================
+        
+        // 1. PASTE YOUR GOOGLE SHEET CSV LINK HERE
         const sheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTwkmeDfJlVBuOfAvJDVrKIbJsS376H_khpj15-ZTOLOIm910oH_6m91CBcdPh3A42JGALAERDJws93/pub?gid=0&single=true&output=csv'; 
-        // ==========================================
 
-        // 1. Setup Map (Google Hybrid Style)
+        // 2. SET YOUR PASSWORD HERE
+        const myPassword = "@XF@%@z746*^2Xz5X$!0y7!2592#";
+
+        // ==================================================
+
+
+        // --- Map Setup (Google Hybrid Look) ---
         var googleHybrid = L.tileLayer('http://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}',{
             maxZoom: 20,
             subdomains:['mt0','mt1','mt2','mt3']
@@ -53,11 +66,33 @@
         var currentCircle = null;
         var markersLayer = L.layerGroup().addTo(map);
 
-        // 2. Fetch Live Data
-        if (sheetUrl === 'PASTE_YOUR_PUBLISHED_CSV_LINK_HERE') {
-            document.getElementById('status').innerText = "Error: No Sheet Link Configured";
-            document.getElementById('status').style.color = "red";
+
+        // --- Password & Security Logic ---
+        
+        // Ask for password immediately on load
+        var userEntry = prompt("This map is private. Please enter the password:");
+
+        if (userEntry === myPassword) {
+            // Password Correct: Start the data fetch
+            document.getElementById('status').innerText = "Access Granted. Loading...";
+            document.getElementById('status').style.color = "green";
+            loadData(); 
         } else {
+            // Password Incorrect: Stop everything
+            document.getElementById('status').innerText = "⛔ Access Denied";
+            document.getElementById('status').style.color = "red";
+            alert("Incorrect Password. Refresh the page to try again.");
+        }
+
+
+        // --- Data Loading Logic ---
+
+        function loadData() {
+            if (sheetUrl.includes('PASTE_YOUR')) {
+                document.getElementById('status').innerText = "Error: Setup Config Required";
+                return;
+            }
+
             fetch(sheetUrl)
                 .then(response => response.text())
                 .then(csvText => {
@@ -65,55 +100,67 @@
                 })
                 .catch(err => {
                     console.error(err);
-                    document.getElementById('status').innerText = "Error loading data";
+                    document.getElementById('status').innerText = "Error connecting to Google Sheets";
                 });
         }
 
-        // 3. Process Data
         function processCSV(csvText) {
             markersLayer.clearLayers();
             var lines = csvText.split('\n');
             var count = 0;
             var bounds = L.latLngBounds();
 
-            lines.forEach(function(line, index) {
-                // Skip header if present (optional check) or just ensure numbers are valid
+            lines.forEach(function(line) {
                 var parts = line.split(',');
                 
+                // Expecting: Name, Lat, Lng, Radius(KM)
                 if (parts.length >= 4) {
                     var name = parts[0].trim();
                     var lat = parseFloat(parts[1]);
                     var lng = parseFloat(parts[2]);
-                    var radius = parseFloat(parts[3]);
+                    
+                    // FIX: Read as KM, convert to Meters for map logic
+                    var radiusKm = parseFloat(parts[3]); 
+                    var radiusMeters = radiusKm * 1000;  
 
-                    if (!isNaN(lat) && !isNaN(lng) && !isNaN(radius)) {
-                        addMarker(lat, lng, name, radius);
+                    if (!isNaN(lat) && !isNaN(lng) && !isNaN(radiusMeters)) {
+                        addMarker(lat, lng, name, radiusMeters, radiusKm);
                         bounds.extend([lat, lng]);
                         count++;
                     }
                 }
             });
 
-            document.getElementById('status').innerText = "Live: " + count + " locations loaded";
+            document.getElementById('status').innerText = "Live: " + count + " locations";
+            document.getElementById('status').style.color = "black";
+            
             if (count > 0) {
                 map.fitBounds(bounds, { padding: [50, 50] });
             }
         }
 
-        function addMarker(lat, lng, name, radius) {
+        function addMarker(lat, lng, name, radiusMeters, radiusKm) {
             var marker = L.marker([lat, lng]).addTo(markersLayer);
-            marker.bindPopup("<b>" + name + "</b><br>Radius: " + (radius/1000) + "km");
+
+            // Popup shows KM (user friendly)
+            marker.bindPopup("<b>" + name + "</b><br>Radius: " + radiusKm + " km");
 
             marker.on('click', function() {
                 if (currentCircle) map.removeLayer(currentCircle);
+
+                // Circle draws in Meters (technical requirement)
                 currentCircle = L.circle([lat, lng], {
                     color: '#3388ff',
                     fillColor: '#3388ff',
                     fillOpacity: 0.2,
-                    radius: radius
+                    radius: radiusMeters
                 }).addTo(map);
+                
+                // Optional: Zoom slightly to the circle area?
+                // map.fitBounds(currentCircle.getBounds());
             });
         }
+
     </script>
 </body>
 </html>
