@@ -3,34 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Radius Map</title>
+    <title>Live Street Map</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
      crossorigin=""/>
      
     <style>
-        /* Force the map to fill the screen */
+        /* Map fills the screen */
         html, body { margin: 0; padding: 0; height: 100%; width: 100%; }
-        #map { height: 100%; width: 100%; background: #ddd; }
+        #map { height: 100%; width: 100%; background: #f0f0f0; }
         
         /* Status Box Styling */
         .status-box {
             position: absolute;
             top: 10px;
-            right: 60px;
+            right: 60px; /* Left of the layer switcher */
             background: white;
-            padding: 15px 20px;
+            padding: 12px 15px;
             z-index: 1000;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
             font-family: sans-serif;
             font-size: 14px;
-            text-align: center;
-            min-width: 200px;
+            font-weight: bold;
+            color: #333;
         }
-        .status-error { color: red; font-weight: bold; }
-        .status-success { color: green; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -47,78 +45,85 @@
         // 1. CONFIGURATION
         // ==================================================
         
-        // Paste your Google Sheet "Publish to Web" CSV link inside the quotes below
+        // Paste your Google Sheet CSV link here
         const sheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTwkmeDfJlVBuOfAvJDVrKIbJsS376H_khpj15-ZTOLOIm910oH_6m91CBcdPh3A42JGALAERDJws93/pub?gid=0&single=true&output=csv'; 
 
-        // Set your password inside the quotes below
+        // Set your password here
         const myPassword = "@XF@%@z746*^2Xz5X$!0y7!2592#";
 
         // ==================================================
 
 
-        // --- 2. Initialize Map with Secure Google Tiles ---
+        // --- 2. Map Setup (Street View Default) ---
         
-        // We use 'mt1.google.com' over HTTPS to prevent the "Mixed Content" empty page error
+        // A. Google Streets (The standard "Lively" map)
+        var googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            attribution: 'Google Maps'
+        });
+
+        // B. Google Satellite (Hybrid - just in case you want it later)
         var googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
             maxZoom: 20,
             attribution: 'Google Maps'
         });
 
+        // Initialize Map with STREETS as default
         var map = L.map('map', {
-            center: [20, 0], // Default center before data loads
+            center: [20, 0], 
             zoom: 2,
-            layers: [googleHybrid]
+            layers: [googleStreets] // <--- This makes it Street view by default
         });
 
-        // Layer group to hold our pins
+        // Add "Layer Control" button (Top Right)
+        var baseMaps = {
+            "Street Map": googleStreets,
+            "Satellite": googleHybrid
+        };
+        L.control.layers(baseMaps).addTo(map);
+
         var markersLayer = L.layerGroup().addTo(map);
         var currentCircle = null;
 
 
         // --- 3. Password Logic ---
         
-        // We wrap the logic in a timeout to ensure the HTML loads first
         setTimeout(function() {
-            var userEntry = prompt("Restricted Map. Please enter password:");
+            var userEntry = prompt("Please enter the map password:");
 
             if (userEntry === myPassword) {
-                updateStatus("Access Granted. Loading Data...", "status-success");
+                updateStatus("Access Granted. Loading...");
                 fetchData();
             } else {
-                updateStatus("⛔ Wrong Password.", "status-error");
-                // Disable the map interaction if password is wrong
+                updateStatus("⛔ Wrong Password.");
                 map.dragging.disable();
                 map.touchZoom.disable();
-                map.scrollWheelZoom.disable();
             }
         }, 500);
 
 
-        // --- 4. Data Fetching & Processing ---
+        // --- 4. Data Logic ---
 
         function fetchData() {
-            if (sheetUrl.includes('PASTE_YOUR_LINK')) {
-                updateStatus("Error: You forgot to paste the Google Sheet Link in the code.", "status-error");
+            if (sheetUrl.includes('PASTE_YOUR')) {
+                updateStatus("Error: Google Sheet Link missing in code.");
                 return;
             }
 
             fetch(sheetUrl)
-                .then(response => {
-                    if (!response.ok) throw new Error("Network response was not ok");
-                    return response.text();
+                .then(res => {
+                    if (!res.ok) throw new Error("Network error");
+                    return res.text();
                 })
-                .then(csvText => {
-                    processCSV(csvText);
-                })
+                .then(csvText => processCSV(csvText))
                 .catch(err => {
                     console.error(err);
-                    updateStatus("Error: Could not load Google Sheet. Check the link.", "status-error");
+                    updateStatus("Error: Could not load data.");
                 });
         }
 
         function processCSV(csvText) {
             markersLayer.clearLayers();
-            
             var lines = csvText.split('\n');
             var count = 0;
             var bounds = L.latLngBounds();
@@ -126,20 +131,15 @@
             lines.forEach(function(line) {
                 var parts = line.split(',');
                 
-                // We look for at least 4 columns: Name, Lat, Lng, Radius(KM)
                 if (parts.length >= 4) {
                     var name = parts[0].trim();
                     var lat = parseFloat(parts[1]);
                     var lng = parseFloat(parts[2]);
-                    var radiusKm = parseFloat(parts[3]); // Read as KM
+                    var radiusKm = parseFloat(parts[3]); // Read KM
 
-                    // Validation: Are these actual numbers?
                     if (!isNaN(lat) && !isNaN(lng) && !isNaN(radiusKm)) {
-                        
-                        // Convert KM to Meters for the circle drawing
-                        var radiusMeters = radiusKm * 1000;
-
-                        addInteractiveMarker(lat, lng, name, radiusMeters, radiusKm);
+                        var radiusMeters = radiusKm * 1000; // Convert to Meters
+                        addMarker(lat, lng, name, radiusMeters, radiusKm);
                         bounds.extend([lat, lng]);
                         count++;
                     }
@@ -147,37 +147,32 @@
             });
 
             if (count > 0) {
-                updateStatus("Live: " + count + " locations loaded.", "status-success");
+                updateStatus("Live: " + count + " locations loaded.");
                 map.fitBounds(bounds, { padding: [50, 50] });
             } else {
-                updateStatus("Data loaded, but no valid coordinates found.", "status-error");
+                updateStatus("No valid locations found in sheet.");
             }
         }
 
-        function addInteractiveMarker(lat, lng, name, radiusMeters, radiusKm) {
+        function addMarker(lat, lng, name, radiusMeters, radiusKm) {
             var marker = L.marker([lat, lng]).addTo(markersLayer);
 
-            // Popup shows readable KM
             marker.bindPopup("<b>" + name + "</b><br>Radius: " + radiusKm + " km");
 
             marker.on('click', function() {
                 if (currentCircle) map.removeLayer(currentCircle);
 
-                // Draw circle using Meters
                 currentCircle = L.circle([lat, lng], {
                     color: '#3388ff',
                     fillColor: '#3388ff',
-                    fillOpacity: 0.3,
-                    radius: radiusMeters 
+                    fillOpacity: 0.2,
+                    radius: radiusMeters
                 }).addTo(map);
             });
         }
 
-        // Helper to update the white box text
-        function updateStatus(text, className) {
-            var el = document.getElementById('status');
-            el.innerText = text;
-            el.className = 'status-box ' + className;
+        function updateStatus(text) {
+            document.getElementById('status').innerText = text;
         }
 
     </script>
