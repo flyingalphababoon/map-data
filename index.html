@@ -3,31 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Street Map</title>
+    <title>Live Map + Click Anywhere</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
      crossorigin=""/>
      
     <style>
-        /* Map fills the screen */
         html, body { margin: 0; padding: 0; height: 100%; width: 100%; }
         #map { height: 100%; width: 100%; background: #f0f0f0; }
         
-        /* Status Box Styling */
         .status-box {
             position: absolute;
-            top: 10px;
-            right: 60px; /* Left of the layer switcher */
-            background: white;
-            padding: 12px 15px;
-            z-index: 1000;
-            border-radius: 4px;
+            top: 10px; right: 60px; 
+            background: white; padding: 12px 15px;
+            z-index: 1000; border-radius: 4px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-family: sans-serif; font-size: 14px; font-weight: bold; color: #333;
+        }
+
+        .search-container {
+            background: white; padding: 10px;
+            border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
             font-family: sans-serif;
-            font-size: 14px;
-            font-weight: bold;
-            color: #333;
+        }
+        
+        .search-input {
+            width: 250px; padding: 8px;
+            border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
         }
     </style>
 </head>
@@ -45,71 +48,111 @@
         // 1. CONFIGURATION
         // ==================================================
         
-        // Paste your Google Sheet CSV link here
+        // A. Google Sheet Link
         const sheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTwkmeDfJlVBuOfAvJDVrKIbJsS376H_khpj15-ZTOLOIm910oH_6m91CBcdPh3A42JGALAERDJws93/pub?gid=0&single=true&output=csv'; 
 
-        // Set your password here
+        // B. Password
         const myPassword = "@XF@%@z746*^2Xz5X$!0y7!2592#";
+
+        // C. Default Radius for Random Clicks (in Kilometers)
+        const defaultClickRadiusKm = 150; 
 
         // ==================================================
 
 
-        // --- 2. Map Setup (Street View Default) ---
+        // --- 2. Map Setup ---
         
-        // A. Google Streets (The standard "Lively" map)
         var googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-            maxZoom: 20,
-            attribution: 'Google Maps'
+            maxZoom: 20, attribution: 'Google Maps'
         });
 
-        // B. Google Satellite (Hybrid - just in case you want it later)
         var googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-            maxZoom: 20,
-            attribution: 'Google Maps'
+            maxZoom: 20, attribution: 'Google Maps'
         });
 
-        // Initialize Map with STREETS as default
         var map = L.map('map', {
-            center: [20, 0], 
-            zoom: 2,
-            layers: [googleStreets] // <--- This makes it Street view by default
+            center: [20, 0], zoom: 2,
+            layers: [googleStreets],
+            zoomControl: false
         });
 
-        // Add "Layer Control" button (Top Right)
-        var baseMaps = {
-            "Street Map": googleStreets,
-            "Satellite": googleHybrid
-        };
-        L.control.layers(baseMaps).addTo(map);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        L.control.layers({ "Street Map": googleStreets, "Satellite": googleHybrid }).addTo(map);
 
         var markersLayer = L.layerGroup().addTo(map);
-        var currentCircle = null;
+        var currentCircle = null; // To keep track of the active radius
+        var markerDatabase = {}; 
 
 
-        // --- 3. Password Logic ---
+        // --- 3. Map Click Logic (New Feature) ---
+        
+        map.on('click', function(e) {
+            // Remove previous circle
+            if (currentCircle) map.removeLayer(currentCircle);
+
+            var radiusMeters = defaultClickRadiusKm * 1000;
+
+            // Draw Green Circle (Green indicates manual check)
+            currentCircle = L.circle(e.latlng, {
+                color: 'green',
+                fillColor: 'green',
+                fillOpacity: 0.2,
+                radius: radiusMeters
+            }).addTo(map);
+
+            // Add a temporary Popup
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent("<b>Custom Check</b><br>Radius: " + defaultClickRadiusKm + " km")
+                .openOn(map);
+        });
+
+
+        // --- 4. Search Bar ---
+        
+        var SearchControl = L.Control.extend({
+            options: { position: 'topleft' },
+            onAdd: function(map) {
+                var div = L.DomUtil.create('div', 'search-container');
+                L.DomEvent.disableClickPropagation(div); 
+                div.innerHTML = `
+                    <input type="text" id="searchInput" list="locationList" 
+                           class="search-input" placeholder="🔍 Search Name..." />
+                    <datalist id="locationList"></datalist>
+                `;
+                return div;
+            }
+        });
+        map.addControl(new SearchControl());
+
+        document.getElementById('searchInput').addEventListener('change', function(e) {
+            var val = e.target.value;
+            var match = markerDatabase[val];
+            if (match) {
+                map.flyTo(match.getLatLng(), 10, { duration: 1.5 });
+                match.fire('click'); // Simulate a click on the marker
+            }
+        });
+
+
+        // --- 5. Password & Data Logic ---
         
         setTimeout(function() {
             var userEntry = prompt("Please enter the map password:");
-
             if (userEntry === myPassword) {
                 updateStatus("Access Granted. Loading...");
                 fetchData();
             } else {
                 updateStatus("⛔ Wrong Password.");
                 map.dragging.disable();
-                map.touchZoom.disable();
             }
         }, 500);
 
-
-        // --- 4. Data Logic ---
-
         function fetchData() {
             if (sheetUrl.includes('PASTE_YOUR')) {
-                updateStatus("Error: Google Sheet Link missing in code.");
+                updateStatus("Error: Google Sheet Link missing.");
                 return;
             }
-
             fetch(sheetUrl)
                 .then(res => {
                     if (!res.ok) throw new Error("Network error");
@@ -124,22 +167,31 @@
 
         function processCSV(csvText) {
             markersLayer.clearLayers();
+            markerDatabase = {}; 
+            var dataList = document.getElementById('locationList');
+            dataList.innerHTML = '';
+
             var lines = csvText.split('\n');
             var count = 0;
             var bounds = L.latLngBounds();
 
             lines.forEach(function(line) {
                 var parts = line.split(',');
-                
                 if (parts.length >= 4) {
                     var name = parts[0].trim();
                     var lat = parseFloat(parts[1]);
                     var lng = parseFloat(parts[2]);
-                    var radiusKm = parseFloat(parts[3]); // Read KM
+                    var radiusKm = parseFloat(parts[3]);
 
                     if (!isNaN(lat) && !isNaN(lng) && !isNaN(radiusKm)) {
-                        var radiusMeters = radiusKm * 1000; // Convert to Meters
-                        addMarker(lat, lng, name, radiusMeters, radiusKm);
+                        var radiusMeters = radiusKm * 1000;
+                        var marker = addMarker(lat, lng, name, radiusMeters, radiusKm);
+                        
+                        markerDatabase[name] = marker;
+                        var option = document.createElement('option');
+                        option.value = name;
+                        dataList.appendChild(option);
+
                         bounds.extend([lat, lng]);
                         count++;
                     }
@@ -150,7 +202,7 @@
                 updateStatus("Live: " + count + " locations loaded.");
                 map.fitBounds(bounds, { padding: [50, 50] });
             } else {
-                updateStatus("No valid locations found in sheet.");
+                updateStatus("No valid locations found.");
             }
         }
 
@@ -159,22 +211,28 @@
 
             marker.bindPopup("<b>" + name + "</b><br>Radius: " + radiusKm + " km");
 
-            marker.on('click', function() {
+            marker.on('click', function(e) {
+                // Stop the map click event from firing (prevents conflict)
+                L.DomEvent.stopPropagation(e);
+
                 if (currentCircle) map.removeLayer(currentCircle);
 
                 currentCircle = L.circle([lat, lng], {
-                    color: '#3388ff',
+                    color: '#3388ff',     // Blue for database items
                     fillColor: '#3388ff',
                     fillOpacity: 0.2,
                     radius: radiusMeters
                 }).addTo(map);
+                
+                marker.openPopup();
             });
+            
+            return marker;
         }
 
         function updateStatus(text) {
             document.getElementById('status').innerText = text;
         }
-
     </script>
 </body>
 </html>
